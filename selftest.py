@@ -160,12 +160,18 @@ def executions_of(task):
 
 
 print("\n--- discovery and guards ---")
-card = client.get("/.well-known/agent-card.json")
+card = client.get("/.well-known/agent-card.json", headers={"host": "tds-ga-5-v6nz.onrender.com", "x-forwarded-proto": "https"})
 check("agent card is served at the origin", card.status_code == 200)
 body = card.json()
 check("card declares protocol 1.0", body.get("protocolVersion") == "1.0")
 check("card declares HTTP+JSON transport", body.get("preferredTransport") == "HTTP+JSON")
 check("card advertises a bearer security scheme", "bearerAuth" in (body.get("securitySchemes") or {}))
+check("card advertises exact base URL", body.get("url") == "https://tds-ga-5-v6nz.onrender.com/a2a/")
+check("card supportedInterfaces contains exact base URL", body.get("supportedInterfaces", [{}])[0].get("url") == "https://tds-ga-5-v6nz.onrender.com/a2a/")
+check("card defaultInputModes contains batch mode", BATCH_MODE in body.get("defaultInputModes", []))
+check("card defaultOutputModes contains proposals mode", "application/vnd.ga5.invoice-action-proposals+json" in body.get("defaultOutputModes", []))
+check("card defaultOutputModes contains receipts mode", "application/vnd.ga5.invoice-action-receipts+json" in body.get("defaultOutputModes", []))
+check("card contains invoice_action_agent skill", any(s.get("id") == "invoice_action_agent" for s in body.get("skills", [])))
 check("legacy /.well-known/agent.json also answers",
       client.get("/.well-known/agent.json").status_code == 200)
 
@@ -180,6 +186,9 @@ r = send(batch_message("m0"), ctype="application/json")
 check("application/json body is refused with 415", r.status_code == 415, r.text[:120])
 check("responses use the A2A media type",
       send(batch_message("probe-ct")).headers.get("content-type", "").startswith(A2A))
+r404 = client.get("/a2a/invalid-route-xyz")
+check("404 errors use A2A media type", r404.headers.get("content-type", "").startswith(A2A))
+
 
 print("\n--- proposals ---")
 mid = "msg-" + uuid.uuid4().hex[:8]

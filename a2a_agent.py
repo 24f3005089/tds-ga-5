@@ -241,78 +241,112 @@ def check_headers(request, *, body=False):
 
 # ------------------------------------------------------------- agent card
 
-AGENT_CARD = {
-    "protocolVersion": "1.0",
-    "name": "GA5 Invoice Action Agent",
-    "description": (
-        "Reads batches of long, noisy invoice case files, extracts the decisive "
-        "facts and evidence, proposes exactly one business action per package, "
-        "and executes only the actions the caller returns an accepted tool "
-        "receipt for."
-    ),
-    "version": "1.0.0",
-    "preferredTransport": "HTTP+JSON",
-    "url": BASE_URL,
-    "provider": {"organization": "TDS GA5", "url": BASE_URL},
-    "capabilities": {
-        "streaming": False,
-        "pushNotifications": False,
-        "stateTransitionHistory": True,
-        "extendedAgentCard": False,
-    },
-    "supportedInterfaces": [
-        {"url": BASE_URL, "protocolBinding": "HTTP+JSON", "protocolVersion": "1.0"}
-    ],
-    "defaultInputModes": [MODE_BATCH, MODE_RESULTS, "application/json"],
-    "defaultOutputModes": [MODE_PROPOSALS, MODE_RECEIPTS, "application/json"],
-    "securitySchemes": {
-        "bearerAuth": {"type": "http", "scheme": "bearer",
-                       "description": "Per-tenant Bearer token; each token is a distinct principal."}
-    },
-    "security": [{"bearerAuth": []}],
-    "skills": [
-        {
-            "id": "invoice_action_agent",
-            "name": "Invoice Action Agent",
-            "description": (
-                "Reconciles invoices, purchase orders, goods receipts, credit notes "
-                "and policy memos inside a claim batch, then chooses one of "
-                "settle_invoice, request_approval, hold_invoice, reject_duplicate or "
-                "open_exception per package with verbatim source evidence, and "
-                "finalises accepted actions against grader tool receipts."
-            ),
-            "tags": ["invoice", "accounts-payable", "reconciliation",
-                     "approval", "duplicate-detection", "exception-handling",
-                     "a2a"],
-            "examples": [
-                "Propose one action for each package in invoice claim batch BATCH-2031.",
-                "Finalise the approved proposals using these tool receipts.",
-            ],
-            "inputModes": [MODE_BATCH, MODE_RESULTS],
-            "outputModes": [MODE_PROPOSALS, MODE_RECEIPTS],
-        }
-    ],
-}
+# ------------------------------------------------------------- agent card
+
+def get_base_url(request: Request) -> str:
+    env_url = os.environ.get("A2A_BASE_URL")
+    if env_url and env_url.strip() and env_url.strip() != "http://localhost:8000/a2a/":
+        u = env_url.strip()
+        return u if u.endswith("/") else u + "/"
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}/a2a/"
 
 
-def card_response(request):
-    """The spec registers application/a2a+json but never fixes the card's own
-    type, and the discovery document is conventionally application/json. So
-    negotiate: a client that asks for A2A JSON gets it, everyone else gets
-    plain JSON."""
+def make_agent_card(base_url: str) -> dict:
+    base_url = base_url if base_url.endswith("/") else base_url + "/"
+    return {
+        "protocolVersion": "1.0",
+        "name": "GA5 Invoice Action Agent",
+        "description": (
+            "Reads batches of long, noisy invoice case files, extracts the decisive "
+            "facts and evidence, proposes exactly one business action per package, "
+            "and executes only the actions the caller returns an accepted tool "
+            "receipt for."
+        ),
+        "version": "1.0.0",
+        "preferredTransport": "HTTP+JSON",
+        "url": base_url,
+        "provider": {"organization": "TDS GA5", "url": base_url},
+        "capabilities": {
+            "streaming": False,
+            "pushNotifications": False,
+            "stateTransitionHistory": True,
+            "extendedAgentCard": False,
+        },
+        "supportedInterfaces": [
+            {
+                "url": base_url,
+                "protocolBinding": "HTTP+JSON",
+                "protocolVersion": "1.0",
+            }
+        ],
+        "defaultInputModes": [
+            MODE_BATCH,
+            MODE_RESULTS,
+            "application/json",
+        ],
+        "defaultOutputModes": [
+            MODE_PROPOSALS,
+            MODE_RECEIPTS,
+            "application/json",
+        ],
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "description": "Per-tenant Bearer token; each token is a distinct principal.",
+            }
+        },
+        "security": [{"bearerAuth": []}],
+        "skills": [
+            {
+                "id": "invoice_action_agent",
+                "name": "Invoice Action Agent",
+                "description": (
+                    "Reconciles invoices, purchase orders, goods receipts, credit notes "
+                    "and policy memos inside a claim batch, then chooses one of "
+                    "settle_invoice, request_approval, hold_invoice, reject_duplicate or "
+                    "open_exception per package with verbatim source evidence, and "
+                    "finalises accepted actions against grader tool receipts."
+                ),
+                "tags": [
+                    "invoice",
+                    "accounts-payable",
+                    "reconciliation",
+                    "approval",
+                    "duplicate-detection",
+                    "exception-handling",
+                    "a2a",
+                ],
+                "examples": [
+                    "Propose one action for each package in invoice claim batch BATCH-2031.",
+                    "Finalise the approved proposals using these tool receipts.",
+                ],
+                "inputModes": [MODE_BATCH, MODE_RESULTS],
+                "outputModes": [MODE_PROPOSALS, MODE_RECEIPTS],
+            }
+        ],
+    }
+
+
+def card_response(request: Request):
+    base_url = get_base_url(request)
+    card_data = make_agent_card(base_url)
     accept = (request.headers.get("accept") or "").lower()
     media = A2A_MEDIA_TYPE if "a2a+json" in accept else JSON_MEDIA_TYPE
-    return JSONResponse(AGENT_CARD, media_type=media)
+    return JSONResponse(card_data, media_type=media)
 
 
 @router.get("/.well-known/agent-card.json")
+@router.get("/.well-known/agent.json")
+@router.get("/a2a/.well-known/agent-card.json")
+@router.get("/a2a/.well-known/agent.json")
+@router.get("/a2a/agent-card.json")
+@router.get("/agent-card.json")
 async def agent_card(request: Request):
     return card_response(request)
 
-
-@router.get("/.well-known/agent.json")
-async def agent_card_legacy(request: Request):
-    return card_response(request)
 
 
 # ------------------------------------------------------- document handling
@@ -898,14 +932,37 @@ def make_artifact(artifact_id, name, media_type, data):
             "parts": [make_part(media_type, data)]}
 
 
+def compact_task_for_list(task: dict) -> dict:
+    if not isinstance(task, dict):
+        return task
+    t = json.loads(json.dumps(task))
+    for msg in t.get("history", []):
+        if isinstance(msg, dict) and msg.get("parts"):
+            for part in msg["parts"]:
+                if isinstance(part, dict) and isinstance(part.get("data"), dict):
+                    pkgs = part["data"].get("packages")
+                    if isinstance(pkgs, list):
+                        for p in pkgs:
+                            if isinstance(p, dict) and "documents" in p:
+                                p["documents"] = [{"name": d.get("name")} for d in p["documents"] if isinstance(d, dict) and d.get("name")]
+    return t
+
+
 def message_obj(raw, task_id, context_id, role="ROLE_USER"):
-    msg = dict(raw) if isinstance(raw, dict) else {"parts": []}
+    msg = json.loads(json.dumps(raw)) if isinstance(raw, dict) else {"parts": []}
     msg["kind"] = "message"
     msg["role"] = msg.get("role") or role
     msg["taskId"] = task_id
     msg["contextId"] = context_id
     msg.setdefault("messageId", sha("q10-msg", canonical(raw))[:32])
     msg.setdefault("parts", [])
+    for part in msg.get("parts", []):
+        if isinstance(part, dict) and isinstance(part.get("data"), dict):
+            pkgs = part["data"].get("packages")
+            if isinstance(pkgs, list):
+                for p in pkgs:
+                    if isinstance(p, dict) and "documents" in p:
+                        p["documents"] = [{"name": d.get("name")} for d in p["documents"] if isinstance(d, dict) and d.get("name")]
     return msg
 
 
@@ -918,12 +975,12 @@ def agent_message(task_id, context_id, text, suffix):
 
 def task_response(task):
     """Reads and cancellation return a bare Task."""
-    return A2AJSONResponse(task)
+    return A2AJSONResponse(compact_task_for_list(task))
 
 
 def task_envelope(task):
     """message:send is the one route that wraps its Task in {"task": ...}."""
-    return A2AJSONResponse({"task": task})
+    return A2AJSONResponse({"task": compact_task_for_list(task)})
 
 
 # --------------------------------------------------------- message:send
@@ -958,6 +1015,7 @@ def any_data_part(message):
 
 
 @router.post("/a2a/message:send")
+@router.post("/message:send")
 async def message_send(request: Request):
     who, bad = check_headers(request, body=True)
     if bad:
@@ -1217,6 +1275,7 @@ async def continue_task(who, message, message_id, fingerprint):
 # ------------------------------------------------------------- task reads
 
 @router.get("/a2a/tasks")
+@router.get("/tasks")
 async def list_tasks(request: Request):
     who, bad = check_headers(request)
     if bad:
@@ -1225,10 +1284,11 @@ async def list_tasks(request: Request):
         rows = db().execute(
             "SELECT doc FROM q10_tasks WHERE principal=? ORDER BY created",
             (who,)).fetchall()
-    return A2AJSONResponse({"tasks": [json.loads(r["doc"]) for r in rows]})
+    return A2AJSONResponse({"tasks": [compact_task_for_list(json.loads(r["doc"])) for r in rows]})
 
 
 @router.get("/a2a/tasks/{task_id}")
+@router.get("/tasks/{task_id}")
 async def get_task(task_id: str, request: Request):
     who, bad = check_headers(request)
     if bad:
@@ -1240,6 +1300,7 @@ async def get_task(task_id: str, request: Request):
 
 
 @router.post("/a2a/tasks/{task_id}:cancel")
+@router.post("/tasks/{task_id}:cancel")
 async def cancel_task(task_id: str, request: Request):
     who, bad = check_headers(request)
     if bad:
@@ -1263,3 +1324,4 @@ async def cancel_task(task_id: str, request: Request):
                   (CANCELED, json.dumps(task), time.time(), task_id))
         c.commit()
     return task_response(task)
+
